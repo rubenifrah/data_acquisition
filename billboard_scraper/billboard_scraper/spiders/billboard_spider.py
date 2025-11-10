@@ -7,102 +7,102 @@ class BillboardSpiderSpider(scrapy.Spider):
 
     def parse(self, response):
         """
-        Analyse la page d'index principale de Wikipedia.
-        Trouve tous les liens vers les classements annuels et génère une nouvelle
-        requête (Request) pour chacun, en appelant 'self.parse_song_page'.
+        Parses the main Wikipedia index page.
+        Finds all links to the year-end charts and yields a new
+        Request for each one, calling 'self.parse_song_page'.
         """
-        self.log(f'Analyse de la page index principale : {response.url}')
+        self.log(f'Parsing main index page: {response.url}')
         
-        # Sélecteur CSS pour trouver les liens dans la navbox
+        # CSS selector to find links within the navbox
         links_selector = 'div.navbox[aria-labelledby^="Billboard_Year-End_Hot_100_singles"] .navbox-list li a'
         links = response.css(links_selector)
 
-        self.log(f'Trouvé {len(links)} liens d\'années à crawler.')
+        self.log(f'Found {len(links)} year links to crawl.')
 
         for link in links:
             relative_url = link.css('::attr(href)').get()
             year_text = link.css('::text').get()
 
-            # S'assurer qu'il s'agit d'un lien d'année valide
+            # Ensure it is a valid year link
             if relative_url and year_text and year_text.strip().isdigit():
                 full_url = response.urljoin(relative_url)
                 
-                # Au lieu de 'yield' le lien, nous 'yield' une nouvelle Requête
-                # pour crawler cette page.
-                # Le 'callback' indique à Scrapy quelle fonction appeler
-                # une fois la page téléchargée.
+                # Instead of yielding the link, we yield a new Request
+                # to crawl this page.
+                # The 'callback' tells Scrapy which function to call
+                # once the page is downloaded.
                 yield scrapy.Request(
                     url=full_url,
                     callback=self.parse_song_page
                 )
             else:
-                self.log(f'Lien non-traité (pas une année) : {link.get()}')
+                self.log(f'Skipped link (not a year): {link.get()}')
 
     def parse_song_page(self, response):
         """
-        Analyse une page de classement annuelle (ex: "..._of_1970").
-        Cette fonction est appelée pour chaque lien trouvé dans 'parse()'.
-        Elle scrape la table des chansons et 'yield' un dictionnaire par chanson.
+        Parses an annual chart page (e.g., "..._of_1970").
+        This function is called for each link found in 'parse()'.
+        It scrapes the song table and yields one dictionary per song.
         """
-        self.log(f'Analyse de la page de chansons : {response.url}')
+        self.log(f'Parsing song page: {response.url}')
 
-        # 1. Extraire l'année depuis le titre de la page (ex: <h1>)
+        # 1. Extract the year from the page title (e.g., <h1>)
         page_title = response.css('h1#firstHeading::text').get()
-        year = "UNKNOWN" # Valeur par défaut
+        year = "UNKNOWN" # Default value
         if page_title and 'of ' in page_title:
-            # Extrait l'année, ex: "1970" depuis "... singles of 1970"
-            # Fonctionne aussi pour "... top 30 singles of 1949"
+            # Extracts the year, e.g., "1970" from "... singles of 1970"
+            # Also works for "... top 30 singles of 1949"
             year = page_title.split('of ')[-1].strip()
         
-        # 2. Trouver la table des chansons
-        # On cible la table qui a les classes 'wikitable' et 'sortable'
+        # 2. Find the song table
+        # We target the table with both 'wikitable' and 'sortable' classes
         table = response.css('table.wikitable.sortable')
         if not table:
-            self.log(f"Aucune table 'wikitable sortable' trouvée sur {response.url}")
+            self.log(f"No 'wikitable sortable' table found on {response.url}")
             return
 
-        # 3. Récupérer toutes les lignes <tr> qui contiennent des <td>
-        # (cela permet de sauter la ligne d'en-tête <th>)
+        # 3. Get all rows <tr> that contain data cells <td>
+        # (this skips the header row <th>)
         rows = table.css('tbody tr:has(td)')
         if not rows:
-            self.log(f"Aucune ligne <tr> avec <td> trouvée dans la table sur {response.url}")
+            self.log(f"No <tr> rows with <td> found in the table on {response.url}")
             return
 
-        self.log(f'Trouvé {len(rows)} chansons pour l\'année {year}.')
+        self.log(f'Found {len(rows)} songs for the year {year}.')
 
-        # 4. Boucler sur chaque ligne pour extraire les données
+        # 4. Loop over each row to extract data
         for row in rows:
-            # Récupérer toutes les cellules (colonnes) de la ligne
+            # Get all cells (columns) in the row
             cells = row.css('td')
             
-            # S'assurer qu'on a bien au moins 3 cellules (No., Titre, Artiste)
+            # Ensure we have at least 3 cells (No., Title, Artist)
             if len(cells) < 3:
-                self.log(f'Ligne malformée sur {response.url}: {row.get()}')
-                continue # Passer à la ligne suivante
+                self.log(f'Malformed row on {response.url}: {row.get()}')
+                continue # Skip to the next row
 
-            # --- Extraction des données ---
+            # --- Data Extraction ---
             
-            # Colonne 'place': se trouve dans la 1ère cellule <td>
+            # 'place' column: found in the 1st <td> cell
             place = cells[0].css('::text').get()
             
-            # Colonne 'name': se trouve dans la 2ème cellule <td>
-            # On joint tous les nœuds de texte (au cas où) et on enlève les guillemets
+            # 'name' column: found in the 2nd <td> cell
+            # We join all text nodes (just in case) and strip quotes
             name = "".join(cells[1].css('::text').getall()).strip().strip('"')
             
-            # Colonne 'link': le 'href' du lien <a> dans la 2ème cellule <td>
+            # 'link' column: the 'href' from the <a> tag in the 2nd <td>
             link_relative = cells[1].css('a::attr(href)').get()
-            link = None # Par défaut, s'il n'y a pas de lien
+            link = None # Default to None if no link exists
             if link_relative:
-                link = response.urljoin(link_relative) # Crée le lien absolu
+                link = response.urljoin(link_relative) # Create the absolute link
             
-            # Colonne 'artist': se trouve dans la 3ème cellule <td>
-            # On joint tous les nœuds de texte pour gérer les artistes multiples
-            # (ex: "Artiste A & Artiste B")
+            # 'artist' column: found in the 3rd <td> cell
+            # We join all text nodes to handle multiple artists
+            # (e.g., "Artist A & Artist B")
             artist = "".join(cells[2].css('::text').getall()).strip()
 
-            # --- Yield un dictionnaire par chanson ---
-            # Les clés ('name', 'artist', etc.) deviendront
-            # automatiquement les en-têtes du fichier CSV.
+            # --- Yield one dictionary per song ---
+            # The keys ('name', 'artist', etc.) will
+            # automatically become the CSV headers.
             yield {
                 'name': name,
                 'artist': artist,
