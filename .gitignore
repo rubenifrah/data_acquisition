@@ -1,0 +1,36 @@
+
+
+# --- Python ---
+# Ignore the bytecode cache
+__pycache__/
+*.pyc
+
+# Ignore compiled C files or other binaries
+*.pyo
+*.pyd
+
+
+# --- Scrapy ---
+# Ignore Scrapy's internal cache and state directory
+.scrapy/
+
+
+# --- Environments ---
+# Ignore virtual environment folders (e.g., venv, env)
+venv/
+env/
+.venv/
+
+# Ignore sensitive environment variable files
+.env
+
+
+# --- Jupyter Notebook ---
+# Ignore notebook checkpoint files (in case you use notebooks later)
+.ipynb_checkpoints/
+
+
+# --- Operating System ---
+# Ignore OS-specific junk files
+.DS_Store
+Thumbs.db
