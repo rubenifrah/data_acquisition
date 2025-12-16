@@ -1,0 +1,14 @@
+numpy
+pandas
+matplotlib
+scrapy
+spotipy
+python-dotenv
+tqdm
+requests
+lyricsgenius
+thefuzz
+PyYAML
+librosa
+soundfile
+yt_dlp

@@ -93,6 +93,55 @@ This script runs on the *original* scraped data (not the enriched data) to check
 
 ---
 
+### Step 4: Compute Audio Metadata from Spotify Previews
+
+This mirrors the librosa feature extraction used in the scratch neural-net project.
+
+* **Command:** (Run from the root folder)
+    ```bash
+    python analysis/audio_metadata_enrichment.py \
+      --input data/songs_database.json \
+      --output data/songs_with_audio_metadata.json \
+      --limit 25  # drop the limit flag to process everything
+    ```
+* **Notes:** Requires the same Spotify credentials as Step 2. The script pulls the preview URL for each track, downloads the clip, computes features such as MFCCs and tempo, and stores them under `audio_metadata`.
+  When a Spotify preview is missing, it will fall back to a YouTube search and compute the features from the first audio result.
+
+### Step 5: Optional Scrapers for Comments and Awards
+
+Two Scrapy spiders scaffold the next enrichment steps:
+
+* **YouTube comments (top 10 liked):**
+    ```bash
+    scrapy crawl youtube_comments \
+      -a links_path=data/youtube_links.json \
+      -O data/youtube_comments.json
+    ```
+    `data/youtube_links.json` should contain objects with `name`, `artist`, and either `youtube_id` or `youtube_url`.
+
+* **Wikipedia awards/recognition:**
+    ```bash
+    scrapy crawl wikipedia_awards \
+      -a dataset_path=data/songs_database.json \
+      -O data/wikipedia_awards.json
+    ```
+    This spider scans each song's Wikipedia page for award/accolades sections and saves bullet/table content.
+
+### Step 6: Export the Final YAML Dataset
+
+Combine all available enrichments into a single YAML file.
+
+```bash
+python analysis/build_yaml_dataset.py \
+  --input data/songs_database.json \
+  --audio-metadata data/songs_with_audio_metadata.json \
+  --youtube-comments data/youtube_comments.json \
+  --awards data/wikipedia_awards.json \
+  --output data/songs_dataset.yaml
+```
+
+The YAML output keeps song identity, Spotify metadata, computed audio descriptors, lyrics, and placeholders for YouTube comments and Wikipedia awards.
+
 ## Next Steps (Project Scope)
 
 The output of this repository is the `data/songs_with_audio_features.csv` file. This file is the starting point for the next phases of our project, which will include:
