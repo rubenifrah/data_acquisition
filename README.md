@@ -25,7 +25,7 @@ This project is organized into distinct directories to separate concerns:
 
 ## How to Run This Project (Step-by-Step)
 
-### Step 0: Setup
+### Setup
 
 1.  **Clone the Repository:**
     ```bash
@@ -43,6 +43,22 @@ This project is organized into distinct directories to separate concerns:
     # Install all required libraries
     pip install -r requirements.txt
     ```
+
+
+### Step 0 (skip all other steps): Run the Whole Pipeline in One Shot
+
+Use `pipeline.py` to stitch everything together (Spotify IDs/features, Genius lyrics, audio metadata, link discovery, Scrapy spiders, YAML assembly).
+
+```bash
+python pipeline.py -n 10 \
+  --sample-rate 22050 \    # optional override
+  --duration 30            # optional override
+```
+- `-n`: How many *new* fully processed songs to add, starting from the top of `data/all_songs.csv`. If the YAML already has 10 entries and you pass `-n 10`, the pipeline targets the first 20 songs.
+- The pipeline only adds a song if Spotify ID, Genius lyrics, and audio metadata are present; YouTube comments and awards are attached when available (it retries up to 4 YouTube search hits for comments).
+- Intermediate files are written to `data/` (Spotify CSVs, JSON database, audio metadata JSON, discovered link JSONs, comments/awards JSONs). Existing files are reused when possible so repeated runs are incremental.
+- If the next song in chart order is missing required data (Spotify ID, lyrics, or audio metadata), the pipeline stops instead of skipping, so YAML order stays contiguous.
+
 
 ### Step 1: Scrape Billboard Data
 
@@ -171,26 +187,3 @@ python analysis/build_yaml_dataset.py \
 ```
 
 The YAML output keeps song identity, Spotify metadata, computed audio descriptors, lyrics, and placeholders for YouTube comments and Wikipedia awards.
-
-### Step 7: Run the Whole Pipeline in One Shot
-
-Use `pipeline.py` to stitch everything together (Spotify IDs/features, Genius lyrics, audio metadata, link discovery, Scrapy spiders, YAML assembly).
-
-```bash
-python pipeline.py -n 10 \
-  --sample-rate 22050 \    # optional override
-  --duration 30            # optional override
-```
-- `-n`: How many *new* fully processed songs to add, starting from the top of `data/all_songs.csv`. If the YAML already has 10 entries and you pass `-n 10`, the pipeline targets the first 20 songs.
-- The pipeline only adds a song if Spotify ID, Genius lyrics, and audio metadata are present; YouTube comments and awards are attached when available (it retries up to 4 YouTube search hits for comments).
-- Intermediate files are written to `data/` (Spotify CSVs, JSON database, audio metadata JSON, discovered link JSONs, comments/awards JSONs). Existing files are reused when possible so repeated runs are incremental.
-- If the next song in chart order is missing required data (Spotify ID, lyrics, or audio metadata), the pipeline stops instead of skipping, so YAML order stays contiguous.
-- Requires credentials: `.env` must contain `SPOTIPY_CLIENT_ID`, `SPOTIPY_CLIENT_SECRET`, and `GENIUS_ACCESS_TOKEN` so the pipeline can refresh Spotify + Genius stages when needed.
-
-## Next Steps (Project Scope)
-
-The output of this repository is the `data/songs_with_audio_features.csv` file. This file is the starting point for the next phases of our project, which will include:
-
--   **Phase 3: Genius API:** Scrape lyrics for all matched songs.
--   **Phase 4: YouTube API:** Get public reception data (views, likes, comments).
--   **Phase 5: Final Database:** Merge all sources into a single MongoDB database, with each song as a document.
