@@ -102,30 +102,60 @@ This mirrors the librosa feature extraction used in the scratch neural-net proje
     python analysis/audio_metadata_enrichment.py \
       --input data/songs_database.json \
       --output data/songs_with_audio_metadata.json \
-      --limit 25  # drop the limit flag to process everything
+      --limit 25 \
+      --duration 30 \
+      --offset 0 \
+      --sample-rate 22050 \
+      --force
     ```
+    - `--input`: Path to the JSON/CSV source dataset, defaulting to `data/songs_database.json`.
+    - `--output`: Destination for the enriched dataset (`data/songs_with_audio_metadata.json` by default).
+    - `--limit`: Only process the first *N* rows; omit it to run on the entire dataset.
+    - `--duration`: Maximum duration in seconds of each clip that Librosa loads (defaults to 30 seconds).
+    - `--offset`: Row index to start from so you can chunk the workload across runs.
+    - `--sample-rate`: Target sampling rate fed to Librosa (default 22,050 Hz).
+    - `--force`: Recompute metadata for rows that already have `audio_metadata`; drop the flag to skip completed rows.
 * **Notes:** Requires the same Spotify credentials as Step 2. The script pulls the preview URL for each track, downloads the clip, computes features such as MFCCs and tempo, and stores them under `audio_metadata`.
   When a Spotify preview is missing, it will fall back to a YouTube search and compute the features from the first audio result.
 
 ### Step 5: Optional Scrapers for Comments and Awards
 
-Two Scrapy spiders scaffold the next enrichment steps:
+First, auto-discover the target pages (no hand-made JSONs needed):
+```bash
+python analysis/discover_links.py \
+  --input data/all_songs.csv \
+  --limit 100 \                    # optional: first N rows (after offset)
+  --offset 0 \                     # optional: skip N rows
+  --youtube-output data/youtube_links.json \
+  --wiki-output data/wiki_awards_links.json \
+  --force-wiki-search \            # optional: ignore existing 'link' column
+  --force-youtube-search           # optional: ignore any youtube_url/audio_preview_url columns
+```
+- `--skip-youtube` / `--skip-wiki`: Disable either search pass.
+- Defaults reuse any existing Wikipedia `link` column and any YouTube URLs already present (e.g., `audio_preview_url` from the audio metadata fallback).
+- YouTube discovery stores up to the top 4 search candidates (`youtube_candidates`) so the spider can fall back if one video has no comments.
+
+Then run the Scrapy spiders:
 
 * **YouTube comments (top 10 liked):**
     ```bash
     scrapy crawl youtube_comments \
       -a links_path=data/youtube_links.json \
+      -a limit=100 \                # optional: only first N rows from links_path
+      -a max_comments=10 \          # optional: number of comments per video
       -O data/youtube_comments.json
     ```
     `data/youtube_links.json` should contain objects with `name`, `artist`, and either `youtube_id` or `youtube_url`.
+    The spider pulls commentEntityPayload from the YouTube API (works with current responses), respecting `max_comments`. It sets a browser user-agent and skips robots.txt for comment calls. If the first video has zero comments or fails, it automatically retries the 2nd–4th candidates from `youtube_candidates`; after that it records no comments.
 
 * **Wikipedia awards/recognition:**
     ```bash
     scrapy crawl wikipedia_awards \
-      -a dataset_path=data/songs_database.json \
+      -a dataset_path=data/wiki_awards_links.json \
+      -a limit=100 \                # optional: only first N rows from dataset_path
       -O data/wikipedia_awards.json
     ```
-    This spider scans each song's Wikipedia page for award/accolades sections and saves bullet/table content.
+    This spider scans each song's Wikipedia page (with a browser user-agent) and captures award-ish content from paragraphs, lists, and tables (Grammy/award/nomination/ranking mentions). Output entries include `track_name`, `artist`, `year`, `source`, and `awards` (list of strings).
 
 ### Step 6: Export the Final YAML Dataset
 
@@ -141,6 +171,21 @@ python analysis/build_yaml_dataset.py \
 ```
 
 The YAML output keeps song identity, Spotify metadata, computed audio descriptors, lyrics, and placeholders for YouTube comments and Wikipedia awards.
+
+### Step 7: Run the Whole Pipeline in One Shot
+
+Use `pipeline.py` to stitch everything together (Spotify IDs/features, Genius lyrics, audio metadata, link discovery, Scrapy spiders, YAML assembly).
+
+```bash
+python pipeline.py -n 10 \
+  --sample-rate 22050 \    # optional override
+  --duration 30            # optional override
+```
+- `-n`: How many *new* fully processed songs to add, starting from the top of `data/all_songs.csv`. If the YAML already has 10 entries and you pass `-n 10`, the pipeline targets the first 20 songs.
+- The pipeline only adds a song if Spotify ID, Genius lyrics, and audio metadata are present; YouTube comments and awards are attached when available (it retries up to 4 YouTube search hits for comments).
+- Intermediate files are written to `data/` (Spotify CSVs, JSON database, audio metadata JSON, discovered link JSONs, comments/awards JSONs). Existing files are reused when possible so repeated runs are incremental.
+- If the next song in chart order is missing required data (Spotify ID, lyrics, or audio metadata), the pipeline stops instead of skipping, so YAML order stays contiguous.
+- Requires credentials: `.env` must contain `SPOTIPY_CLIENT_ID`, `SPOTIPY_CLIENT_SECRET`, and `GENIUS_ACCESS_TOKEN` so the pipeline can refresh Spotify + Genius stages when needed.
 
 ## Next Steps (Project Scope)
 

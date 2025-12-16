@@ -11,6 +11,17 @@ class WikipediaAwardsSpider(scrapy.Spider):
     name = "wikipedia_awards"
     allowed_domains = ["en.wikipedia.org"]
 
+    custom_settings = {
+        "TELNETCONSOLE_ENABLED": False,
+        "DEFAULT_REQUEST_HEADERS": {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+    }
+
     def __init__(self, dataset_path: str = "data/songs_database.json", limit: Optional[int] = None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.dataset_path = Path(dataset_path)
@@ -43,7 +54,6 @@ class WikipediaAwardsSpider(scrapy.Spider):
                 url=entry["link"],
                 callback=self.parse_awards,
                 cb_kwargs={"entry": entry},
-                headers={"Accept-Language": "en-US,en;q=0.9"},
             )
 
     def parse_awards(self, response: scrapy.http.Response, entry: Dict[str, str]):
@@ -58,24 +68,47 @@ class WikipediaAwardsSpider(scrapy.Spider):
 
     def _extract_awards(self, response: scrapy.http.Response) -> List[str]:
         awards: List[str] = []
-        keywords = ("award", "accolade", "honor", "honour")
-        for heading in response.xpath("//h2[span[@class='mw-headline']]"):
-            title = " ".join(heading.xpath(".//span[@class='mw-headline']//text()").getall()).strip().lower()
-            if not any(key in title for key in keywords):
-                continue
+        keywords = (
+            "award",
+            "grammy",
+            "accolade",
+            "honor",
+            "honour",
+            "nomination",
+            "nominated",
+            "won",
+            "winning",
+            "ranked",
+            "ranking",
+            "listed",
+        )
 
-            for node in heading.xpath("./following-sibling::*"):
-                tag = node.root.tag if hasattr(node, "root") else node.xpath("name()").get()
-                if tag == "h2":
-                    break
-                if tag in {"ul", "ol"}:
-                    for bullet in node.xpath(".//li"):
-                        text = " ".join(bullet.css("::text").getall()).strip()
-                        if text:
-                            awards.append(text)
-                elif tag == "table":
-                    for row in node.xpath(".//tr[th or td]"):
-                        text = " ".join(row.css("::text").getall()).strip()
-                        if text:
-                            awards.append(text)
+        def looks_relevant(text: str) -> bool:
+            lower = text.lower()
+            return any(k in lower for k in keywords)
+
+        root = response.xpath("//div[contains(@class,'mw-parser-output')]")
+        seen = set()
+
+        # Award-ish bullets (often live under reception sections)
+        for bullet in root.xpath(".//ul/li | .//ol/li"):
+            text = " ".join(bullet.css("::text").getall()).strip()
+            if text and looks_relevant(text) and text not in seen:
+                seen.add(text)
+                awards.append(text)
+
+        # Paragraphs often mention wins/nominations inline.
+        for para in root.xpath("./p"):
+            text = " ".join(para.css("::text").getall()).strip()
+            if text and looks_relevant(text) and text not in seen:
+                seen.add(text)
+                awards.append(text)
+
+        # Capture rows from award/nomination tables
+        for row in root.xpath(".//table[contains(@class,'wikitable')]//tr[th or td]"):
+            text = " ".join(row.css("::text").getall()).strip()
+            if text and looks_relevant(text) and text not in seen:
+                seen.add(text)
+                awards.append(text)
+
         return awards
