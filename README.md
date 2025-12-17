@@ -77,11 +77,11 @@ This step uses the Scrapy spider to crawl Wikipedia and build our initial list o
 
 ### Step 2: Enrich with Spotify Data
 
-This is the most critical (and longest) step. This script will:
+This script will:
 1.  Read `data/all_songs.csv`.
 2.  Search Spotify for all ~7,000 songs to get their `spotify_track_id`.
 3.  **Save an intermediate file** `data/songs_with_spotify_ids.csv` so you never have to run the 1-hour search again.
-4.  Fetch audio features (danceability, energy, etc.) in batches.
+4.  Fetch the associated song lyrics on Genius
 5.  Save the final, complete dataset.
 
 **Before you run:**
