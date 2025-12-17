@@ -39,10 +39,22 @@ def parse_args() -> argparse.Namespace:
         help="Optional scraped comments JSON from the YouTube spider.",
     )
     parser.add_argument(
+        "--youtube-links",
+        type=Path,
+        default=Path("data") / "youtube_links.json",
+        help="Optional YouTube discovery output to attach IDs/URLs.",
+    )
+    parser.add_argument(
         "--awards",
         type=Path,
         default=Path("data") / "wikipedia_awards.json",
         help="Optional scraped awards JSON from the Wikipedia spider.",
+    )
+    parser.add_argument(
+        "--comment-limit",
+        type=int,
+        default=10,
+        help="Maximum number of comments per track to keep (capped at 15).",
     )
     parser.add_argument(
         "--output",
@@ -126,22 +138,58 @@ def build_spotify_feature_map(records: List[Dict]) -> Dict[str, Dict[str, object
 def build_comment_map(records: List[Dict]) -> Dict[str, List[Dict]]:
     mapping: Dict[str, List[Dict]] = {}
     for row in records:
-        key = row.get("youtube_id") or row.get("track_key")
-        if not key:
-            continue
-        mapping.setdefault(str(key), []).append(
-            {
-                "comment_id": row.get("comment_id"),
-                "author": row.get("author"),
-                "text": row.get("text"),
-                "like_count": to_native(row.get("like_count")),
-                "published_at": row.get("published_at"),
-                "position": to_native(row.get("position")),
-            }
+        youtube_id = row.get("youtube_id")
+        track_key = row.get("track_key") or make_track_key(
+            row.get("track_name", "") or row.get("name", ""),
+            row.get("artist", ""),
         )
+        keys = [key for key in (youtube_id, track_key) if key]
+        if not keys:
+            continue
+
+        entry = {
+            "comment_id": row.get("comment_id"),
+            "author": row.get("author"),
+            "text": row.get("text"),
+            "like_count": to_native(row.get("like_count")),
+            "published_at": row.get("published_at"),
+            "position": to_native(row.get("position")),
+        }
+        for key in keys:
+            mapping.setdefault(str(key), []).append(entry)
     for comments in mapping.values():
         comments.sort(key=lambda c: (c.get("position") or 0))
     return mapping
+
+
+def build_youtube_link_map(records: List[Dict]) -> Dict[str, Dict[str, object]]:
+    mapping: Dict[str, Dict[str, object]] = {}
+    for row in records:
+        key = make_track_key(row.get("name", "") or row.get("track_name", ""), row.get("artist", ""))
+        if not key:
+            continue
+        youtube_id = row.get("youtube_id")
+        youtube_url = row.get("youtube_url")
+        if not youtube_url and youtube_id:
+            youtube_url = f"https://www.youtube.com/watch?v={youtube_id}"
+        mapping[key] = {
+            "youtube_id": youtube_id,
+            "youtube_url": youtube_url,
+            "youtube_candidates": row.get("youtube_candidates") or [],
+        }
+    return mapping
+
+
+def merge_youtube_links(base_records: List[Dict], link_map: Dict[str, Dict[str, object]]) -> None:
+    for row in base_records:
+        track_key = make_track_key(row.get("name", ""), row.get("artist", ""))
+        link = link_map.get(track_key)
+        if not link:
+            continue
+        row["youtube_id"] = row.get("youtube_id") or link.get("youtube_id")
+        row["youtube_url"] = row.get("youtube_url") or link.get("youtube_url")
+        if link.get("youtube_candidates"):
+            row["youtube_candidates"] = link.get("youtube_candidates")
 
 
 def build_award_map(records: List[Dict]) -> Dict[str, List[str]]:
@@ -165,12 +213,13 @@ def merge_audio_metadata(base_records: List[Dict], metadata_map: Dict[str, Dict]
             row["audio_metadata"] = metadata_map[track_id]
 
 
-def merge_comments(base_records: List[Dict], comment_map: Dict[str, List[Dict]]) -> None:
+def merge_comments(base_records: List[Dict], comment_map: Dict[str, List[Dict]], limit: int = 10) -> None:
+    capped_limit = min(max(limit, 0), 15)
     for row in base_records:
         youtube_key = row.get("youtube_id")
         track_key = make_track_key(row.get("name", ""), row.get("artist", ""))
         comments = comment_map.get(youtube_key) or comment_map.get(track_key) or []
-        row["youtube_comments"] = comments[:10]
+        row["youtube_comments"] = comments[:capped_limit]
 
 
 def merge_awards(base_records: List[Dict], award_map: Dict[str, List[str]]) -> None:
@@ -205,6 +254,7 @@ def clean_record(row: Dict) -> Dict:
         "spotify_audio_features": row.get("spotify_audio_features"),
         "audio_preview_url": row.get("audio_preview_url"),
         "youtube_id": row.get("youtube_id"),
+        "youtube_url": row.get("youtube_url"),
         "youtube_comments": row.get("youtube_comments", []),
         "awards": row.get("awards", []),
     }
@@ -219,12 +269,14 @@ def main() -> None:
 
     audio_metadata_records = load_optional_records(args.audio_metadata)
     spotify_feature_records = load_optional_records(args.spotify_features)
+    youtube_link_records = load_optional_records(args.youtube_links)
     comment_records = load_optional_records(args.youtube_comments)
     award_records = load_optional_records(args.awards)
 
     merge_audio_metadata(base_records, build_audio_metadata_map(audio_metadata_records))
     merge_spotify_features(base_records, build_spotify_feature_map(spotify_feature_records))
-    merge_comments(base_records, build_comment_map(comment_records))
+    merge_youtube_links(base_records, build_youtube_link_map(youtube_link_records))
+    merge_comments(base_records, build_comment_map(comment_records), limit=args.comment_limit)
     merge_awards(base_records, build_award_map(award_records))
 
     cleaned = [clean_record(row) for row in base_records]

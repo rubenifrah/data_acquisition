@@ -36,15 +36,18 @@ class WikipediaAwardsSpider(scrapy.Spider):
         with self.dataset_path.open("r", encoding="utf-8") as handle:
             data = json.load(handle)
 
+        def pick_link(row: Dict) -> Optional[str]:
+            return row.get("link") or row.get("wikipedia_link")
+
         rows = [
             {
                 "name": row.get("name"),
                 "artist": row.get("artist"),
                 "year": row.get("year"),
-                "link": row.get("link"),
+                "link": pick_link(row),
             }
             for row in data
-            if row.get("link")
+            if pick_link(row)
         ]
         return rows if self.limit is None else rows[: self.limit]
 

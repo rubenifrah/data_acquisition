@@ -47,16 +47,20 @@ This project is organized into distinct directories to separate concerns:
 
 ### Step 0 (skip all other steps): Run the Whole Pipeline in One Shot
 
-Use `pipeline.py` to stitch everything together (Spotify IDs/features, Genius lyrics, audio metadata, link discovery, Scrapy spiders, YAML assembly).
+Use `pipeline.py` to stitch everything together (audio metadata from Spotify/YouTube fallbacks, YouTube discovery/comments, Wikipedia awards scraping, YAML assembly). It starts from `data/songs_database.json`, which should already contain the Spotify IDs, lyrics, and Wikipedia links.
 
 ```bash
 python pipeline.py -n 10 \
+  --comments 10 \          # optional: top comments to keep (max 15)
   --sample-rate 22050 \    # optional override
   --duration 30            # optional override
 ```
-- `-n`: How many *new* fully processed songs to add, starting from the top of `data/all_songs.csv`. If the YAML already has 10 entries and you pass `-n 10`, the pipeline targets the first 20 songs.
+- Ensure `data/songs_database.json` exists first (produced by the Spotify/lyrics prep).
+- `-n`: How many *new* fully processed songs to add, starting from the top of `data/songs_database.json`. If the YAML already has 10 entries and you pass `-n 10`, the pipeline targets the first 20 songs.
+- `--comments`: Top N comments per track (or fewer if not available), capped at 15.
+- Processing is pipelined per song (audio → YouTube link discovery → comments → awards), so stage 1 of song N+1 starts as soon as song N reaches the next stage. Each stage writes after every song, making long runs resilient to interruptions and naturally rate-limited.
 - The pipeline only adds a song if Spotify ID, Genius lyrics, and audio metadata are present; YouTube comments and awards are attached when available (it retries up to 4 YouTube search hits for comments).
-- Intermediate files are written to `data/` (Spotify CSVs, JSON database, audio metadata JSON, discovered link JSONs, comments/awards JSONs). Existing files are reused when possible so repeated runs are incremental.
+- Intermediate files are written to `data/` (audio metadata JSON, discovered YouTube link JSON, comments/awards JSONs). Existing files are reused and updated song-by-song so repeated runs pick up where they left off.
 - If the next song in chart order is missing required data (Spotify ID, lyrics, or audio metadata), the pipeline stops instead of skipping, so YAML order stays contiguous.
 
 
