@@ -9,6 +9,7 @@ interruptions while naturally pacing API calls.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import queue
 import subprocess
@@ -17,7 +18,7 @@ import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 import yaml
 from tqdm import tqdm
@@ -116,6 +117,14 @@ def atomic_write_json(path: Path, records: List[Dict]) -> None:
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     with tmp_path.open("w", encoding="utf-8") as handle:
         json.dump(records, handle, indent=2, ensure_ascii=False)
+    tmp_path.replace(path)
+
+
+def atomic_write_yaml(path: Path, records: List[Dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(records, handle, sort_keys=False, allow_unicode=True)
     tmp_path.replace(path)
 
 
@@ -273,12 +282,15 @@ class SongPipeline:
         comment_limit: int,
         sample_rate: int,
         duration: float,
+        target_total: int,
     ):
         self.base_records = base_records
         self.order_map = order_map
         self.comment_limit = clamp_comment_limit(comment_limit)
         self.sample_rate = sample_rate
         self.duration = duration
+        self.target_total = target_total
+        self.yaml_lock = threading.Lock()
 
     def _sorted_keys(self, keys: List[str]) -> List[str]:
         return sorted(keys, key=lambda k: self.order_map.get(k, len(self.order_map) + 1))
@@ -305,6 +317,49 @@ class SongPipeline:
         if youtube_id and rid and str(rid) == str(youtube_id):
             return True
         return bool(track_key) and rkey == track_key
+
+    def _assemble_record(self, job: SongJob) -> Optional[Dict]:
+        record = copy.deepcopy(job.record)
+        records = [record]
+
+        assembler.merge_audio_metadata(
+            records, assembler.build_audio_metadata_map(assembler.load_optional_records(AUDIO_METADATA_JSON))
+        )
+        assembler.merge_spotify_features(
+            records, assembler.build_spotify_feature_map(assembler.load_optional_records(SPOTIFY_FEATURES_CSV))
+        )
+        assembler.merge_youtube_links(
+            records, assembler.build_youtube_link_map(assembler.load_optional_records(YOUTUBE_LINKS_JSON))
+        )
+        assembler.merge_comments(
+            records,
+            assembler.build_comment_map(assembler.load_optional_records(YOUTUBE_COMMENTS_JSON)),
+            limit=self.comment_limit,
+        )
+        assembler.merge_awards(records, assembler.build_award_map(assembler.load_optional_records(WIKI_AWARDS_JSON)))
+
+        return assembler.clean_record(record)
+
+    def persist_song_result(self, job: SongJob) -> None:
+        record = self._assemble_record(job)
+        if not record:
+            return
+
+        with self.yaml_lock:
+            current_yaml = load_yaml(FINAL_YAML)
+            if len(current_yaml) >= self.target_total:
+                return
+
+            seen_keys = {make_key(rec) for rec in current_yaml}
+            record_key = make_key(record)
+            if record_key in seen_keys:
+                return
+
+            current_yaml.append(record)
+            missing = missing_fields(record)
+            if missing:
+                print(f"Added {job.label()} with missing fields: {', '.join(missing)}")
+            atomic_write_yaml(FINAL_YAML, current_yaml)
 
     def process_audio_metadata(self, job: SongJob) -> None:
         track_id = job.record.get("spotify_track_id")
@@ -447,7 +502,9 @@ class SongPipeline:
             output_path.unlink(missing_ok=True)
 
 
-def run_pipelined_stages(pipeline: SongPipeline, jobs: List[SongJob]) -> None:
+def run_pipelined_stages(
+    pipeline: SongPipeline, jobs: List[SongJob], on_song_complete: Optional[Callable[[SongJob], None]] = None
+) -> None:
     """Push songs through the four stages with stage-level parallelism."""
     stage_audio = queue.Queue()
     stage_links = queue.Queue()
@@ -470,10 +527,17 @@ def run_pipelined_stages(pipeline: SongPipeline, jobs: List[SongJob]) -> None:
                     out_q.put(None)
                 in_q.task_done()
                 break
+            errored = False
             try:
                 handler(job)
             except Exception as exc:  # pragma: no cover - defensive logging
+                errored = True
                 print(f"[{label}] Error processing {job.label()}: {exc}")
+            if finalize and on_song_complete:
+                try:
+                    on_song_complete(job)
+                except Exception as exc:  # pragma: no cover - defensive logging
+                    print(f"[{label}] Error finalizing {job.label()}: {exc}")
             if finalize:
                 progress.update(1)
             if out_q:
@@ -568,8 +632,9 @@ def main() -> None:
             comment_limit=comment_limit,
             sample_rate=args.sample_rate,
             duration=args.duration,
+            target_total=target_total,
         )
-        run_pipelined_stages(pipeline, jobs)
+        run_pipelined_stages(pipeline, jobs, on_song_complete=pipeline.persist_song_result)
     else:
         print("No new songs requested; skipping processing.")
 
@@ -599,9 +664,7 @@ def main() -> None:
         for line in partials:
             print(f"  - {line}")
 
-    FINAL_YAML.parent.mkdir(parents=True, exist_ok=True)
-    with FINAL_YAML.open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(output, handle, sort_keys=False, allow_unicode=True)
+    atomic_write_yaml(FINAL_YAML, output)
     print(f"Wrote {len(output)} entries to {FINAL_YAML}")
 
 

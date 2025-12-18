@@ -103,6 +103,36 @@ This project is organized into distinct modules:
     pip install -r requirements.txt
     ```
 
+### Run Everything in Docker (Remote-Friendly)
+
+If you prefer to run the full pipeline on a remote server inside Docker (so you can detach from the SSH session), use the supplied `Dockerfile`.
+
+1. **Build the image (only needed once per code/requirements change):**
+    ```bash
+    docker build -t song-pipeline .
+    ```
+2. **Ensure your `.env` file with Spotify credentials is present in the project root.** It will be passed straight into the container.
+3. **Run the pipeline inside the container, binding the repo so datasets persist on the host:**
+    ```bash
+    docker run --rm -it \
+      --env-file .env \
+      -v "$(pwd)":/workspace \
+      -w /workspace \
+      song-pipeline \
+      python pipeline.py -n 10 --comments 10 --sample-rate 22050 --duration 30
+    ```
+4. **Keep the run alive after closing SSH with `nohup`:**
+    ```bash
+    nohup docker run --rm \
+      --env-file .env \
+      -v "$(pwd)":/workspace \
+      -w /workspace \
+      song-pipeline \
+      python pipeline.py -n 10 --comments 10 --sample-rate 22050 --duration 30 \
+      > pipeline.log 2>&1 &
+    ```
+    This writes stdout/stderr to `pipeline.log` so you can inspect progress later with `tail -f pipeline.log`. Replace the pipeline arguments with your desired values.
+
 
 ### Step 0 (skip all other steps): Run the Whole Pipeline in One Shot
 
