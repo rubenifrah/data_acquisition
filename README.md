@@ -1,35 +1,94 @@
 # Building a Dataset for Song Quality Assessment
 
 **Project for: Data Acquisition, Extraction, and Storage (Dauphine IASD)**
-
-**Team: Magalie ZHU, Joey DAVID, Jacques LACHOUQUE, Ruben IFRAH**
-
-This repository contains the code for our group project. The goal is to build a high-quality, enriched dataset of popular music over the years based on the Billboard Year-End charts. This dataset will serve as the foundation for future analysis to answer the question: "Has the 'quality' of popular music decreased over the last 50 years?"
-
-This repository covers **Part 1 (Scraping)** and **Part 2 (Enrichment)** of this pipeline.
+**Team:** Magalie ZHU, Joey DAVID, Jacques LACHOUQUE, Ruben IFRAH
 
 ---
 
-## Project Structure
+## 1. Project Overview
 
-This project is organized into distinct directories to separate concerns:
+The objective of this project is to construct a **comprehensive, high-quality dataset** of popular music spanning the last 50 years, based on the Billboard Hot 100 Year-End charts. This dataset would serve as the foundation for the following research question: *"Has the 'quality' or complexity of popular music decreased over time?"*
 
--   **/billboard_scraper/**: A Scrapy project that crawls Wikipedia to get the base song list.
--   **/analysis/**: A collection of Python scripts for cleaning, analyzing, and enriching the data.
--   **/data/**: The destination for all generated CSV files.
--   **/figures/**: The destination for all generated plots.
--   **/.env**: (Ignored by Git) A file to store our secret Spotify API keys.
--   **/requirements.txt**: A list of all Python libraries needed to run this project.
+To answer this, we couldn't rely on simple metadata (Artist, Title) alone. We constructed a multi-source data acquisition pipeline to enrich basic chart data with:
+*   **Audio Signal Features**: MFCCs, spectral centroids, zero-crossing rates, and tempo (via Librosa).
+*   **Linguistic Content**: Full lyrics for semantic analysis (via Genius).
+*   **Social Context**: Public sentiment and engagement metrics (via YouTube Comments).
+*   **cultural Impact**: Awards and nominations (via Wikipedia).
+
+This repository contains the complete code for **Part 1 (Scraping)** and **Part 2 (Enrichment)** of this research pipeline.
 
 ---
 
-## How to Run This Project (Step-by-Step)
+## 2. Methodology & Technical Approach
+
+Our data acquisition strategy relies on a robust, multi-stage pipeline designed to handle API rate limits, network interruptions, and diverse data formats (HTML, JSON, REST API).
+
+### 2.1. Data Sources
+We integrate data from five distinct sources:
+1.  **Wikipedia (Billboard Charts)**: The "ground truth" list of popular songs. We scrape 'Year-End Hot 100' pages to unbiasedly select top songs from each year.
+2.  **Spotify API**: Used to canonicalize song metadata (finding the correct `track_id`) and fetch high-level audio features (danceability, valence, energy).
+3.  **Genius API**: Scraped to retrieve full song lyrics.
+4.  **YouTube**: Used twofold:
+    *   **Audio**: Fallback for missing Spotify previews to compute signal features.
+    *   **Comments**: Scraped to capture audience sentiment (e.g., "This song brings back memories...").
+5.  **Librosa (Audio Processing)**: We download 30-second previews and compute raw audio descriptors locally, independent of Spotify's pre-computed features.
+
+### 2.2. The Pipeline Architecture (`pipeline.py`)
+To ensure scalability and reliability when processing ~7,000 songs, we implemented a **concurrent, stage-based pipeline**:
+
+*   **Pipelined Execution**: Songs flow through stages (Audio -> Links -> Comments -> Awards). While Song A is being analyzed for audio features, Song B is simultaneously being searched on YouTube.
+*   **Resilience**: The system uses **atomic writes**. Intermediate results are saved to JSON files after *every* single song. If the script crashes or is stopped, it resumes exactly where it left off without duplicating work.
+*   **Smart Discovery**: We do not rely on hardcoded links. The system automatically searches YouTube and Wikipedia for each song using heuristics (Artist + Title) and validates the results.
+
+---
+
+## 3. Dataset Description
+
+The final output is a YAML dataset (`data/songs_dataset.yaml`) where each entry represents a fully enriched song.
+
+### Data Schema
+Each song entry contains:
+*   **Identity**: `name`, `artist`, `year`, `rank` (Billboard placement).
+*   **Spotify Metadata**: `spotify_track_id`, `popularity`, `duration_ms`, `explicit`.
+*   **Audio Features (Spotify)**: `danceability`, `energy`, `loudness`, `valence`, `tempo`, etc.
+*   **Audio Metadata (Computed)**:
+    *   `mfcc_mean`: List of 20 floats (Mel-frequency cepstral coefficients).
+    *   `spectral_centroid_mean`: Brightness of sound.
+    *   `zero_crossing_rate_mean`: Noisiness/percussiveness.
+    *   `tempo`: Estimated BPM from raw audio.
+*   **Lyrics**: Full text from Genius.
+*   **Social**: `youtube_comments` (List of top user comments).
+*   **Awards**: `awards` (List of strings, e.g., "Grammy Award for Best Song").
+
+---
+
+## 4. Project Structure
+
+This project is organized into distinct modules:
+
+*   **/billboard_scraper/**: A **Scrapy** project.
+    *   `spiders/billboard_spider.py`: Crawls Wikipedia for the base song list.
+    *   `spiders/youtube_comments_spider.py`: Asynchronously scrapes YouTube comments.
+    *   `spiders/wikipedia_awards_spider.py`: Extracts awards from Wikipedia pages.
+*   **/analysis/**: Python scripts for data processing and enrichment.
+    *   `audio_metadata_enrichment.py`: Downloads previews and runs Librosa.
+    *   `spotify_enrichment.py`: Handles Spotify API interaction.
+    *   `pipeline.py`: The master orchestration script.
+*   **/data/**: Storage for CSV, JSON, and YAML artifacts.
+*   **/figures/**: Generated visualizations.
+
+---
+
+## 5. How to Run This Project
+
+### Prerequisites
+*   Python 3.8+
+*   FFmpeg (required for Librosa/audio processing)
 
 ### Setup
-
 1.  **Clone the Repository:**
     ```bash
-    git clone [https://github.com/rubenifrah/data_acquisition.git](https://github.com/rubenifrah/data_acquisition.git)
+    git clone https://github.com/rubenifrah/data_acquisition.git
     cd data_acquisition
     ```
 

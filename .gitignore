@@ -34,3 +34,5 @@ env/
 # Ignore OS-specific junk files
 .DS_Store
 Thumbs.db
+
+presentation.tex
